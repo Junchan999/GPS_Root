@@ -59,11 +59,17 @@
             font-size: 1em;
             transition: background-color 0.2s ease;
         }
-        button.red-button { /* ルートクリアボタン用に赤色のスタイルを追加 */
+        button.red-button {
             background-color: #dc3545;
         }
         button.red-button:hover {
             background-color: #c82333;
+        }
+        button.green-button { /* 記録開始ボタン用に緑色のスタイルを追加 */
+            background-color: #28a745;
+        }
+        button.green-button:hover {
+            background-color: #218838;
         }
         button:hover {
             background-color: #0056b3;
@@ -114,18 +120,20 @@
                 font-size: 0.85em;
             }
             .controls-panel {
-                min-height: 220px; /* タイトルとボタンが増えたため高さを調整 */
+                min-height: 250px; /* ボタンが増えたため高さを調整 */
             }
         }
     </style>
 </head>
 <body>
     <div class="controls-panel">
-        <h1>GPSルート表示・誘導 Ver1.20</h1>
+        <h1>GPSルート表示・誘導・記録 Ver1.30</h1>
         <div class="button-group">
             <button id="getLocationButton">現在地を表示</button>
             <button id="startGuidanceButton" disabled>誘導を開始</button>
             <button id="stopGuidanceButton" disabled>誘導を停止</button>
+            <button id="startRecordingButton" class="green-button" disabled>記録開始</button>
+            <button id="stopRecordingButton" class="red-button" disabled>記録終了</button>
             <button id="clearRouteButton" class="red-button" disabled>ルートクリア</button>
         </div>
         <input type="file" id="gpxFileInput" accept=".gpx">
@@ -152,7 +160,9 @@
             const getLocationButton = document.getElementById('getLocationButton');
             const startGuidanceButton = document.getElementById('startGuidanceButton');
             const stopGuidanceButton = document.getElementById('stopGuidanceButton');
-            const clearRouteButton = document.getElementById('clearRouteButton'); // 新しいクリアボタン
+            const startRecordingButton = document.getElementById('startRecordingButton');
+            const stopRecordingButton = document.getElementById('stopRecordingButton');
+            const clearRouteButton = document.getElementById('clearRouteButton');
             const gpxFileInput = document.getElementById('gpxFileInput');
             const statusMessage = document.getElementById('statusMessage');
             const guidanceMessage = document.getElementById('guidanceMessage');
@@ -163,11 +173,61 @@
             let gpxTrackPoints = []; // GPXトラックの緯度経度ポイント
             let routingControl = null; // Leaflet Routing Machine コントロール
             let watchId = null; // Geolocation.watchPosition のID
-            let isGuiding = false; // 誘導中かどうか
+
+            let isGuiding = false; // ルート誘導がアクティブかどうか
+            let isRecording = false; // GPS履歴の記録がアクティブかどうか
+            let isGpsTrackingActive = false; // Geolocation.watchPositionがアクティブかどうか
+
             let userLat = null;
             let userLon = null;
-            let isGpxGuidance = false; // GPXルートで誘導中か
-            let isDestinationGuidance = false; // 目的地ルートで誘導中か
+            let isGpxRouteLoaded = false; // GPXルートが読み込まれているか
+            let isDestinationRouteSet = false; // 目的地ルートが設定されているか
+
+            let recordedTrackPoints = []; // 記録されたGPS履歴を保持する配列
+
+            // ボタンの状態を更新する関数
+            const updateButtonStates = () => {
+                const hasActiveRoute = isGpxRouteLoaded || isDestinationRouteSet;
+
+                getLocationButton.disabled = isGpsTrackingActive; // GPS追跡中は無効
+                startGuidanceButton.disabled = !hasActiveRoute || isGuiding || !navigator.geolocation; // ルートがないか、既に誘導中か、GPS非対応
+                stopGuidanceButton.disabled = !isGuiding; // 誘導中でないなら無効
+                startRecordingButton.disabled = isRecording || !navigator.geolocation; // 既に記録中か、GPS非対応なら無効
+                stopRecordingButton.disabled = !isRecording; // 記録中でないなら無効
+                clearRouteButton.disabled = !hasActiveRoute && !isGuiding && !isRecording; // ルートも誘導も記録もなければ無効
+                gpxFileInput.disabled = isGuiding || isRecording; // 誘導中または記録中はファイル入力を無効
+            };
+
+            // GPS追跡を開始する共通関数
+            const _startGpsTracking = () => {
+                if (!navigator.geolocation) {
+                    statusMessage.textContent = 'お使いのブラウザは位置情報サービスに対応していません。';
+                    alert('お使いのブラウザは位置情報サービスに対応していません。');
+                    return;
+                }
+                if (!isGpsTrackingActive) {
+                    watchId = navigator.geolocation.watchPosition(
+                        onPositionSuccess,
+                        onPositionError,
+                        geolocationOptions
+                    );
+                    isGpsTrackingActive = true;
+                    // statusMessage.textContent = 'GPS追跡を開始しました。'; // このメッセージは呼び出し元で設定
+                }
+            };
+
+            // GPS追跡を停止する共通関数
+            const _stopGpsTracking = () => {
+                // 誘導も記録もアクティブでない場合のみGPS追跡を完全に停止
+                if (!isGuiding && !isRecording && isGpsTrackingActive) {
+                    if (watchId !== null) {
+                        navigator.geolocation.clearWatch(watchId);
+                        watchId = null;
+                    }
+                    isGpsTrackingActive = false;
+                    // statusMessage.textContent は他の処理で上書きされる可能性があるのでここでは設定しない
+                }
+            };
 
             // GPXデータ解析関数
             const parseGpx = (gpxString) => {
@@ -194,15 +254,12 @@
                     gpxPolyline = L.polyline(points, { color: 'blue', weight: 5, opacity: 0.75 }).addTo(map);
                     map.fitBounds(gpxPolyline.getBounds()); // ルート全体が収まるようにズーム
                     statusMessage.textContent = `GPXルートを読み込みました。（${points.length}地点）`;
-                    startGuidanceButton.disabled = false; // GPXが読み込まれたら誘導開始ボタンを有効にする
-                    clearRouteButton.disabled = false;
-                    isGpxGuidance = true; // GPXルートがアクティブ
+                    isGpxRouteLoaded = true;
                 } else {
                     statusMessage.textContent = 'GPXファイルに有効なルートポイントが見つかりませんでした。';
-                    startGuidanceButton.disabled = true;
-                    clearRouteButton.disabled = true;
-                    isGpxGuidance = false;
+                    isGpxRouteLoaded = false;
                 }
+                updateButtonStates();
             };
 
             // 2点間の距離を計算（Leafletのメソッドを使用）
@@ -249,60 +306,54 @@
 
             // 目的地ルートの更新（現在地と目的地に基づいてルートを再計算）
             const updateDestinationRoute = () => {
-                if (userLat && userLon && destinationMarker) {
-                    if (routingControl) {
-                        map.removeControl(routingControl);
-                    }
-                    routingControl = L.Routing.control({
-                        waypoints: [
-                            L.latLng(userLat, userLon),
-                            destinationMarker.getLatLng()
-                        ],
-                        router: L.Routing.osrmv1({
-                            serviceUrl: 'https://router.project-osrm.org/route/v1' // OSRM Public API
-                        }),
-                        lineOptions: {
-                            styles: [{ color: 'red', opacity: 0.8, weight: 6 }]
-                        },
-                        createMarker: function() { return null; }, // デフォルトのマーカーを作成しない
-                        addWaypoints: false,
-                        fitSelectedRoutes: true,
-                        altLineOptions: {
-                            styles: [{ color: 'gray', opacity: 0.4, weight: 4 }]
-                        },
-                        show: false, // ルートのサマリーUIを非表示
-                    }).addTo(map);
-
-                    routingControl.on('routesfound', (e) => {
-                        const routes = e.routes;
-                        if (routes.length > 0) {
-                            const summary = routes[0].summary;
-                            statusMessage.textContent = `目的地ルートを計算しました。距離: ${(summary.totalDistance / 1000).toFixed(1)} km, 時間: ${(summary.totalTime / 60).toFixed(0)} 分`;
-                            startGuidanceButton.disabled = false;
-                            clearRouteButton.disabled = false;
-                            isDestinationGuidance = true;
-                            // Leaflet Routing Machine のルート座標を取得して利用するために保持（オプション）
-                            // routingControl.getWaypoints() などでアクセスできるが、簡略化のためここでは直接使用しない
-                        } else {
-                            statusMessage.textContent = '目的地までのルートが見つかりませんでした。';
-                            startGuidanceButton.disabled = true;
-                            clearRouteButton.disabled = false;
-                            isDestinationGuidance = false;
-                        }
-                    });
-                    routingControl.on('routingerror', (e) => {
-                        statusMessage.textContent = `ルーティングエラー: ${e.message}`;
-                        startGuidanceButton.disabled = true;
-                        clearRouteButton.disabled = false;
-                        isDestinationGuidance = false;
-                        console.error("Routing Error:", e);
-                    });
-                } else {
-                    statusMessage.textContent = '現在地と目的地が設定されていません。';
-                    startGuidanceButton.disabled = true;
-                    clearRouteButton.disabled = (gpxTrackPoints.length === 0);
-                    isDestinationGuidance = false;
+                if (userLat === null || userLon === null || !destinationMarker) {
+                    // 現在地または目的地が設定されていなければルートは計算できない
+                    isDestinationRouteSet = false;
+                    updateButtonStates();
+                    return;
                 }
+
+                if (routingControl) {
+                    map.removeControl(routingControl);
+                }
+                routingControl = L.Routing.control({
+                    waypoints: [
+                        L.latLng(userLat, userLon),
+                        destinationMarker.getLatLng()
+                    ],
+                    router: L.Routing.osrmv1({
+                        serviceUrl: 'https://router.project-osrm.org/route/v1' // OSRM Public API
+                    }),
+                    lineOptions: {
+                        styles: [{ color: 'red', opacity: 0.8, weight: 6 }]
+                    },
+                    createMarker: function() { return null; }, // デフォルトのマーカーを作成しない
+                    addWaypoints: false,
+                    fitSelectedRoutes: true,
+                    altLineOptions: {
+                        styles: [{ color: 'gray', opacity: 0.4, weight: 4 }]
+                    },
+                    show: false, // ルートのサマリーUIを非表示
+                }).addTo(map);
+
+                routingControl.on('routesfound', (e) => {
+                    const routes = e.routes;
+                    if (routes.length > 0) {
+                        const summary = routes[0].summary;
+                        statusMessage.textContent = `目的地ルートを計算しました。距離: ${(summary.totalDistance / 1000).toFixed(1)} km, 時間: ${(summary.totalTime / 60).toFixed(0)} 分`;
+                        isDestinationRouteSet = true;
+                    } else {
+                        statusMessage.textContent = '目的地までのルートが見つかりませんでした。';
+                        isDestinationRouteSet = false;
+                    }
+                    updateButtonStates();
+                });
+                routingControl.on('routingerror', (e) => {
+                    statusMessage.textContent = `ルーティングエラー: ${e.message}`;
+                    isDestinationRouteSet = false;
+                    updateButtonStates();
+                    console.error("Routing Error:", e);
+                });
             };
 
             // GPS位置情報取得成功時の処理
@@ -310,6 +361,7 @@
                 const lat = position.coords.latitude;
                 const lon = position.coords.longitude;
                 const accuracy = position.coords.accuracy; // メートル単位
+                const timestamp = position.timestamp; // タイムスタンプを取得
 
                 userLat = lat;
                 userLon = lon;
@@ -328,9 +380,14 @@
 
                 statusMessage.innerHTML = `現在地を取得しました。<br>緯度: ${lat.toFixed(6)}, 経度: ${lon.toFixed(6)} (精度: 約 ${accuracy.toFixed(0)}m)`;
 
+                // 記録中の場合、GPS履歴を記録
+                if (isRecording) {
+                    recordedTrackPoints.push({ lat: lat, lon: lon, time: new Date(timestamp).toISOString() });
+                }
+
                 // 誘導中の場合
                 if (isGuiding) {
-                    if (isGpxGuidance && gpxTrackPoints.length > 0) {
+                    if (isGpxRouteLoaded && gpxTrackPoints.length > 0) {
                         // GPXルート誘導ロジック
                         const nearestIndex = findNearestGpxPointIndex(lat, lon);
                         if (nearestIndex !== -1) {
@@ -340,15 +397,12 @@
                         } else {
                             guidanceMessage.textContent = 'GPXルート情報が見つかりません。';
                         }
-                    } else if (isDestinationGuidance && routingControl && routingControl._routes && routingControl._routes.length > 0) {
+                    } else if (isDestinationRouteSet && routingControl && routingControl._routes && routingControl._routes.length > 0) {
                         // 目的地ルート誘導ロジック
                         const route = routingControl._routes[0];
                         const routeCoordinates = route.coordinates; // ルートの座標リスト
-                        const summary = route.summary;
 
-                        // 現在地からルート上の最も近い地点を見つける
                         let minRouteDistance = Infinity;
-                        let nearestRoutePoint = null;
                         let nearestRoutePointIndex = -1;
 
                         for (let i = 0; i < routeCoordinates.length; i++) {
@@ -357,12 +411,10 @@
                             const dist = calculateDistance(lat, lon, routeLat, routeLon);
                             if (dist < minRouteDistance) {
                                 minRouteDistance = dist;
-                                nearestRoutePoint = routeCoordinates[i];
                                 nearestRoutePointIndex = i;
                             }
                         }
 
-                        // 残りのルート距離を計算 (routing-machineのwaypointsは出発点と終点なので、coordinatesを使う)
                         let remainingRouteDistance = 0;
                         if (nearestRoutePointIndex !== -1 && nearestRoutePointIndex < routeCoordinates.length - 1) {
                             for (let i = nearestRoutePointIndex; i < routeCoordinates.length - 1; i++) {
@@ -387,8 +439,8 @@
                     guidanceMessage.textContent = '';
                 }
 
-                // 誘導中でないが目的地が設定されている場合、現在地が更新されたらルートを再計算
-                if (!isGuiding && destinationMarker && (userLat !== lat || userLon !== lon)) {
+                // 誘導中でも記録中でもないが、目的地が設定されている場合、現在地が更新されたらルートを再計算
+                if (!isGuiding && !isRecording && isDestinationRouteSet && !isGpxRouteLoaded) {
                     updateDestinationRoute();
                 }
             };
@@ -414,10 +466,14 @@
                 statusMessage.textContent = errorMessage;
                 alert(errorMessage);
 
-                if (isGuiding) {
+                if (isGuiding) { // 誘導中にエラーが発生した場合
                     stopGuidance();
-                    guidanceMessage.textContent = '誘導を停止しました。';
                 }
+                if (isRecording) { // 記録中にエラーが発生した場合
+                    stopRecording();
+                }
+                _stopGpsTracking(); // GPS追跡も停止
+                updateButtonStates();
             };
 
             const geolocationOptions = {
@@ -426,16 +482,57 @@
                 maximumAge: 0
             };
 
+            // 記録されたGPS履歴をGPXファイルとして保存する関数
+            const saveGpxTrack = () => {
+                if (recordedTrackPoints.length === 0) {
+                    statusMessage.textContent = '保存するGPS履歴がありません。';
+                    return;
+                }
+
+                const date = new Date();
+                const yyyy = date.getFullYear();
+                const mm = String(date.getMonth() + 1).padStart(2, '0');
+                const dd = String(date.getDate()).padStart(2, '0');
+                const filename = `${yyyy}${mm}${dd}.gpx`; // ファイル名を yyyymmdd.gpx に修正
+
+                let gpxContent = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="GPS現在地マップ & ルート誘導" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata><name>GPS履歴 ${yyyy}${mm}${dd}</name><desc>記録されたGPSトラック</desc></metadata>
+  <trk><name>記録トラック</name><trkseg>\n`;
+
+                recordedTrackPoints.forEach(point => {
+                    gpxContent += `    <trkpt lat="${point.lat}" lon="${point.lon}"><time>${point.time}</time></trkpt>\n`;
+                });
+
+                gpxContent += `  </trkseg></trk>
+</gpx>`;
+
+                const blob = new Blob([gpxContent], { type: 'application/gpx+xml' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                statusMessage.textContent = `GPS履歴を ${filename} として保存しました。`;
+                recordedTrackPoints = []; // 保存後、履歴をクリア
+            };
+
+
             // ルートとマーカーをクリアする共通関数
             const clearAllRoutesAndMarkers = () => {
-                stopGuidance(); // まず誘導を停止
+                if (isGuiding) stopGuidance();
+                if (isRecording) stopRecording(); // 記録も停止し、履歴を保存
 
                 if (gpxPolyline) {
                     map.removeLayer(gpxPolyline);
                     gpxPolyline = null;
                 }
                 gpxTrackPoints = [];
-                isGpxGuidance = false;
+                isGpxRouteLoaded = false;
 
                 if (destinationMarker) {
                     map.removeLayer(destinationMarker);
@@ -445,17 +542,20 @@
                     map.removeControl(routingControl);
                     routingControl = null;
                 }
-                isDestinationGuidance = false;
-
+                isDestinationRouteSet = false;
+                
                 statusMessage.textContent = 'ルートとマーカーをクリアしました。';
                 guidanceMessage.textContent = '';
-                startGuidanceButton.disabled = true;
-                clearRouteButton.disabled = true;
+                gpxFileInput.value = ''; // ファイル選択をリセット
+                _stopGpsTracking(); // ルートも記録も誘導もなければGPS追跡を停止
+                updateButtonStates();
             };
 
             // 目的地ルートのみクリアする関数
             const clearDestinationRoute = () => {
-                 if (destinationMarker) {
+                if (isGuiding && !isGpxRouteLoaded) stopGuidance(); // 目的地ルート誘導中のみ停止
+                
+                if (destinationMarker) {
                     map.removeLayer(destinationMarker);
                     destinationMarker = null;
                 }
@@ -463,67 +563,65 @@
                     map.removeControl(routingControl);
                     routingControl = null;
                 }
-                isDestinationGuidance = false;
-                if (!isGpxGuidance) { // GPXルートがない場合のみ誘導開始ボタンを無効化
-                    startGuidanceButton.disabled = true;
-                }
-                if (!isGpxGuidance && !destinationMarker) {
-                    clearRouteButton.disabled = true;
-                }
+                isDestinationRouteSet = false;
                 guidanceMessage.textContent = '';
+                // 他のGPS追跡や記録がなければ停止
+                if (!isGuiding && !isRecording) _stopGpsTracking();
+                updateButtonStates();
             }
 
             // GPXルートのみクリアする関数
             const clearGpxRoute = () => {
+                if (isGuiding && !isDestinationRouteSet) stopGuidance(); // GPXルート誘導中のみ停止
+
                 if (gpxPolyline) {
                     map.removeLayer(gpxPolyline);
                     gpxPolyline = null;
                 }
                 gpxTrackPoints = [];
-                isGpxGuidance = false;
-                if (!isDestinationGuidance) { // 目的地ルートがない場合のみ誘導開始ボタンを無効化
-                    startGuidanceButton.disabled = true;
-                }
-                if (!isGpxGuidance && !destinationMarker) {
-                    clearRouteButton.disabled = true;
-                }
+                isGpxRouteLoaded = false;
                 guidanceMessage.textContent = '';
+                gpxFileInput.value = ''; // ファイル選択をリセット
+                // 他のGPS追跡や記録がなければ停止
+                if (!isGuiding && !isRecording) _stopGpsTracking();
+                updateButtonStates();
             }
 
-            // GPS追跡を停止する関数
+            // ルート誘導を停止する関数
             const stopGuidance = () => {
-                if (watchId !== null) {
-                    navigator.geolocation.clearWatch(watchId);
-                    watchId = null;
-                }
                 isGuiding = false;
-                // GPXまたは目的地ルートがアクティブなら誘導開始ボタンを有効にする
-                startGuidanceButton.disabled = !(isGpxGuidance || isDestinationGuidance);
-                stopGuidanceButton.disabled = true;
-                getLocationButton.disabled = false;
-                gpxFileInput.disabled = false;
-                // statusMessage.textContent = '誘導を停止しました。'; // このメッセージはstatusMessageを上書きしない
+                _stopGpsTracking(); // 記録もアクティブでない場合のみGPS追跡を停止
+                statusMessage.textContent = '誘導を停止しました。';
                 guidanceMessage.textContent = '';
+                updateButtonStates();
+            };
+
+            // GPS記録を停止する関数
+            const stopRecording = () => {
+                isRecording = false;
+                _stopGpsTracking(); // 誘導もアクティブでない場合のみGPS追跡を停止
+                saveGpxTrack(); // 記録された履歴を保存
+                updateButtonStates();
             };
 
             // イベントリスナー
             getLocationButton.addEventListener('click', () => {
                 statusMessage.textContent = '現在地を取得中...';
-                getLocationButton.disabled = true;
+                getLocationButton.disabled = true; // クリック時に一旦無効化
 
                 if (navigator.geolocation) {
                     navigator.geolocation.getCurrentPosition(
                         (position) => {
                             onPositionSuccess(position);
-                            getLocationButton.disabled = false;
-                            // 現在地が取得できたら目的地ルートの計算を試みる
-                            if (destinationMarker && !isGuiding && !isGpxGuidance) {
+                            getLocationButton.disabled = false; // 成功したら有効化
+                            // 現在地が取得できたら目的地ルートの計算を試みる (誘導/記録中でなく、GPXも読み込まれていない場合)
+                            if (destinationMarker && !isGuiding && !isRecording && !isGpxRouteLoaded) {
                                 updateDestinationRoute();
                             }
                         },
                         (error) => {
                             onPositionError(error);
-                            getLocationButton.disabled = false;
+                            getLocationButton.disabled = false; // エラーでも有効化
                         },
                         geolocationOptions
                     );
@@ -541,31 +639,38 @@
                     return;
                 }
 
-                if (!isGpxGuidance && !isDestinationGuidance) {
+                if (!isGpxRouteLoaded && !isDestinationRouteSet) {
                     statusMessage.textContent = '誘導を開始するには、まずGPXファイルを読み込むか、マップをクリックして目的地を設定してください。';
                     return;
                 }
 
                 isGuiding = true;
-                startGuidanceButton.disabled = true;
-                stopGuidanceButton.disabled = false;
-                getLocationButton.disabled = true;
-                gpxFileInput.disabled = true;
-                clearRouteButton.disabled = true; // 誘導中はルートクリアを無効に
-
+                _startGpsTracking(); // GPS追跡を開始/継続
                 statusMessage.textContent = '誘導を開始します。現在地を追跡中...';
                 guidanceMessage.textContent = 'ルート情報を計算中...';
-
-                watchId = navigator.geolocation.watchPosition(
-                    onPositionSuccess,
-                    onPositionError,
-                    geolocationOptions
-                );
+                updateButtonStates();
             });
 
             stopGuidanceButton.addEventListener('click', () => {
                 stopGuidance();
-                clearRouteButton.disabled = !(isGpxGuidance || isDestinationGuidance); // 誘導停止後、ルートがあればクリアボタンを有効に
+            });
+
+            startRecordingButton.addEventListener('click', () => {
+                if (!navigator.geolocation) {
+                    statusMessage.textContent = 'お使いのブラウザは位置情報サービスに対応していません。';
+                    alert('お使いのブラウザは位置情報サービスに対応していません。');
+                    return;
+                }
+
+                recordedTrackPoints = []; // 新しい記録開始時に履歴をリセット
+                isRecording = true;
+                _startGpsTracking(); // GPS追跡を開始/継続
+                statusMessage.textContent = 'GPS記録を開始しました。移動履歴を記録中...';
+                updateButtonStates();
+            });
+
+            stopRecordingButton.addEventListener('click', () => {
+                stopRecording();
             });
 
             clearRouteButton.addEventListener('click', () => {
@@ -578,8 +683,8 @@
                     return;
                 }
 
-                // GPXファイルを読み込む前に、目的地ルートをクリアする
-                clearDestinationRoute();
+                clearDestinationRoute(); // GPXファイルを読み込む前に、目的地ルートをクリアする
+                if (isGuiding) stopGuidance(); // 誘導中なら停止
                 
                 const reader = new FileReader();
                 reader.onload = (e) => {
@@ -590,14 +695,14 @@
                     } catch (error) {
                         statusMessage.textContent = 'GPXファイルの解析に失敗しました。ファイルが破損しているか、不正な形式です。';
                         console.error("GPX parsing error:", error);
-                        startGuidanceButton.disabled = true;
-                        clearRouteButton.disabled = true;
+                        isGpxRouteLoaded = false;
+                        updateButtonStates();
                     }
                 };
                 reader.onerror = () => {
                     statusMessage.textContent = 'ファイルの読み込みに失敗しました。';
-                    startGuidanceButton.disabled = true;
-                    clearRouteButton.disabled = true;
+                    isGpxRouteLoaded = false;
+                    updateButtonStates();
                 };
                 reader.readAsText(file);
             });
@@ -605,7 +710,7 @@
             // マップクリックイベントリスナー
             map.on('click', (e) => {
                 clearGpxRoute(); // マップをクリックしたらGPXルートをクリア
-                stopGuidance(); // 誘導中であれば停止
+                if (isGuiding) stopGuidance(); // 誘導中であれば停止
 
                 const clickedLatLng = e.latlng;
 
@@ -623,16 +728,13 @@
                     updateDestinationRoute();
                 } else {
                     statusMessage.textContent += '<br>現在地を取得するとルートが計算されます。';
-                    startGuidanceButton.disabled = true;
-                    clearRouteButton.disabled = false;
-                    isDestinationGuidance = true; // 目的地マーカーがある場合は目的地誘導モード
+                    isDestinationRouteSet = true; // 目的地マーカーがある場合は目的地誘導モード
+                    updateButtonStates();
                 }
             });
 
-            // 初期ロード時にボタンを無効化
-            startGuidanceButton.disabled = true;
-            stopGuidanceButton.disabled = true;
-            clearRouteButton.disabled = true;
+            // 初期ロード時にボタンの状態を更新
+            updateButtonStates();
         });
     </script>
 </body>

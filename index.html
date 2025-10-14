@@ -171,7 +171,7 @@
 </head>
 <body>
     <div class="controls-panel">
-        <h1>GPS表示・誘導・記録Ver1.40</h1>
+        <h1>GPS表示・誘導・記録Ver1.50</h1>
         <div class="button-group">
             <button id="getLocationButton">現在地を表示</button>
             <button id="startGuidanceButton" disabled>誘導を開始</button>
@@ -427,30 +427,32 @@
                 const lat = position.coords.latitude;
                 const lon = position.coords.longitude;
                 const accuracy = position.coords.accuracy; // メートル単位
+                const altitude = position.coords.altitude; // 高度 (メートル) - 修正点1
                 const timestamp = position.timestamp; // タイムスタンプを取得 (UTC milliseconds)
 
                 userLat = lat;
                 userLon = lon;
 
                 const currentLatLng = [lat, lon];
+                const altDisplay = altitude !== null ? `高度: 約 ${altitude.toFixed(0)} m<br>` : ''; // 高度表示を追加
 
                 if (currentLocationMarker) {
                     currentLocationMarker.setLatLng(currentLatLng);
-                    currentLocationMarker.getPopup().setContent(`現在地<br>精度: 約 ${accuracy.toFixed(0)} m`).update();
+                    currentLocationMarker.getPopup().setContent(`現在地<br>${altDisplay}精度: 約 ${accuracy.toFixed(0)} m`).update();
                 } else {
                     currentLocationMarker = L.marker(currentLatLng).addTo(map)
-                        .bindPopup(`現在地<br>精度: 約 ${accuracy.toFixed(0)} m`).openPopup();
+                        .bindPopup(`現在地<br>${altDisplay}精度: 約 ${accuracy.toFixed(0)} m`).openPopup();
                 }
 
                 map.setView(currentLatLng, 16); // 地図の中心を現在地に移動し、ズームレベルを調整
 
-                statusMessage.innerHTML = `現在地を取得しました。<br>緯度: ${lat.toFixed(6)}, 経度: ${lon.toFixed(6)} (精度: 約 ${accuracy.toFixed(0)}m)`;
+                statusMessage.innerHTML = `現在地を取得しました。<br>緯度: ${lat.toFixed(6)}, 経度: ${lon.toFixed(6)} (精度: 約 ${accuracy.toFixed(0)}m)${altDisplay ? `<br>高度: ${altitude.toFixed(1)}m` : ''}`;
 
                 // 記録中の場合、設定された間隔でGPS履歴を記録
                 if (isRecording) {
                     const currentTime = new Date().getTime(); // 現在時刻をミリ秒で取得
                     if ((currentTime - lastRecordedPointTime) >= (recordingIntervalSeconds * 1000)) {
-                        recordedTrackPoints.push({ lat: lat, lon: lon, time: new Date(timestamp).toISOString() }); // GPX timeはUTC
+                        recordedTrackPoints.push({ lat: lat, lon: lon, ele: altitude, time: new Date(timestamp).toISOString() }); // 修正点1: 高度データを追加
                         lastRecordedPointTime = currentTime;
                     }
                 }
@@ -576,8 +578,12 @@
   <trk><name>記録トラック</name><trkseg>\n`;
 
                 recordedTrackPoints.forEach(point => {
+                    gpxContent += `    <trkpt lat="${point.lat}" lon="${point.lon}">`;
+                    if (point.ele !== null && point.ele !== undefined) { // 修正点2: 高度データがあれば追加
+                        gpxContent += `<ele>${point.ele.toFixed(2)}</ele>`; // 小数点以下2桁で出力
+                    }
                     // GPXのtrkpt timeはUTCが標準のため、toISOString()を使用
-                    gpxContent += `    <trkpt lat="${point.lat}" lon="${point.lon}"><time>${point.time}</time></trkpt>\n`;
+                    gpxContent += `<time>${point.time}</time></trkpt>\n`;
                 });
 
                 gpxContent += `  </trkseg></trk>

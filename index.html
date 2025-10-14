@@ -16,7 +16,7 @@
             height: 100%;
             margin: 0;
             padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             line-height: 1.6;
             background-color: #f4f4f4;
             color: #333;
@@ -200,8 +200,8 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            // マップ初期化 (デフォルト位置: 東京タワー)
-            const map = L.map('map').setView([35.6586, 139.7454], 13);
+            // マップ初期化 (デフォルト位置: 住吉大社)
+            const map = L.map('map').setView([34.613379, 135.493023], 15); // 緯度と経度を住吉大社に変更し、ズームレベルを調整
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             }).addTo(map);

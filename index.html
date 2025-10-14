@@ -277,8 +277,8 @@
                 let nearestIndex = -1;
 
                 for (let i = 0; i < gpxTrackPoints.length; i++) {
-                    const trackLat = gpxTrackPoints[i][0];
-                    const trackLon = gpxTrackPoints[i][1];
+                    const trackLat = gpxTrackPoints[i];
+                    const trackLon = gpxTrackPoints[i];
                     const dist = calculateDistance(currentLat, currentLon, trackLat, trackLon);
 
                     if (dist < minDistance) {
@@ -299,7 +299,7 @@
                 for (let i = startIndex; i < gpxTrackPoints.length - 1; i++) {
                     const p1 = gpxTrackPoints[i];
                     const p2 = gpxTrackPoints[i + 1];
-                    totalDistance += calculateDistance(p1[0], p1[1], p2[0], p2[1]);
+                    totalDistance += calculateDistance(p1, p1, p2, p2);
                 }
                 return totalDistance;
             };
@@ -339,7 +339,7 @@
                 routingControl.on('routesfound', (e) => {
                     const routes = e.routes;
                     if (routes.length > 0) {
-                        const summary = routes[0].summary;
+                        const summary = routes.summary;
                         statusMessage.textContent = `目的地ルートを計算しました。距離: ${(summary.totalDistance / 1000).toFixed(1)} km, 時間: ${(summary.totalTime / 60).toFixed(0)} 分`;
                         isDestinationRouteSet = true;
                     } else {
@@ -392,14 +392,14 @@
                         const nearestIndex = findNearestGpxPointIndex(lat, lon);
                         if (nearestIndex !== -1) {
                             const remainingDistance = calculateRemainingGpxRouteDistance(nearestIndex);
-                            const distanceToNearestPoint = calculateDistance(lat, lon, gpxTrackPoints[nearestIndex][0], gpxTrackPoints[nearestIndex][1]);
+                            const distanceToNearestPoint = calculateDistance(lat, lon, gpxTrackPoints[nearestIndex], gpxTrackPoints[nearestIndex]);
                             guidanceMessage.innerHTML = `GPXルート終点まで約 ${Math.round(remainingDistance)} m<br>GPXルートから約 ${Math.round(distanceToNearestPoint)} m`;
                         } else {
                             guidanceMessage.textContent = 'GPXルート情報が見つかりません。';
                         }
                     } else if (isDestinationRouteSet && routingControl && routingControl._routes && routingControl._routes.length > 0) {
                         // 目的地ルート誘導ロジック
-                        const route = routingControl._routes[0];
+                        const route = routingControl._routes;
                         const routeCoordinates = route.coordinates; // ルートの座標リスト
 
                         let minRouteDistance = Infinity;
@@ -493,11 +493,13 @@
                 const yyyy = date.getFullYear();
                 const mm = String(date.getMonth() + 1).padStart(2, '0');
                 const dd = String(date.getDate()).padStart(2, '0');
-                const filename = `${yyyy}${mm}${dd}.gpx`; // ファイル名を yyyymmdd.gpx に修正
+                const hh = String(date.getHours()).padStart(2, '0'); // 時間を追加
+                const min = String(date.getMinutes()).padStart(2, '0'); // 分を追加
+                const filename = `${yyyy}${mm}${dd}_${hh}${min}.gpx`; // ファイル名を yyyymmdd_hhmm.gpx に修正
 
                 let gpxContent = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="GPS現在地マップ & ルート誘導" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
-  <metadata><name>GPS履歴 ${yyyy}${mm}${dd}</name><desc>記録されたGPSトラック</desc></metadata>
+  <metadata><name>GPS履歴 ${yyyy}${mm}${dd} ${hh}:${min}</name><desc>記録されたGPSトラック</desc></metadata>
   <trk><name>記録トラック</name><trkseg>\n`;
 
                 recordedTrackPoints.forEach(point => {
@@ -678,7 +680,7 @@
             });
 
             gpxFileInput.addEventListener('change', (event) => {
-                const file = event.target.files[0];
+                const file = event.target.files;
                 if (!file) {
                     return;
                 }
@@ -739,3 +741,5 @@
     </script>
 </body>
 </html>
+
+--- END OF FILE index.html ---

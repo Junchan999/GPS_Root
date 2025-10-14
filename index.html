@@ -171,7 +171,7 @@
 </head>
 <body>
     <div class="controls-panel">
-        <h1>GPS表示・誘導・記録Ver1.30</h1>
+        <h1>GPS表示・誘導・記録Ver1.40</h1>
         <div class="button-group">
             <button id="getLocationButton">現在地を表示</button>
             <button id="startGuidanceButton" disabled>誘導を開始</button>
@@ -286,12 +286,25 @@
             const parseGpx = (gpxString) => {
                 const parser = new DOMParser();
                 const xmlDoc = parser.parseFromString(gpxString, "text/xml");
-                const trkpts = xmlDoc.getElementsByTagName('trkpt');
+
+                // XML解析エラーのチェック
+                if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+                    const errorText = xmlDoc.getElementsByTagName('parsererror')[0].textContent;
+                    console.error("XML Parsing Error:", errorText);
+                    throw new Error("GPXファイルの解析に失敗しました。ファイルが不正な形式である可能性があります。");
+                }
+                
+                // GPX 1.1の標準名前空間を指定してtrkpt要素を取得
+                const gpxNamespace = 'http://www.topografix.com/GPX/1/1';
+                const trkpts = xmlDoc.getElementsByTagNameNS(gpxNamespace, 'trkpt');
+                
                 const points = [];
                 for (let i = 0; i < trkpts.length; i++) {
                     const lat = parseFloat(trkpts[i].getAttribute('lat'));
                     const lon = parseFloat(trkpts[i].getAttribute('lon'));
-                    points.push([lat, lon]);
+                    if (!isNaN(lat) && !isNaN(lon)) { // 無効な緯度経度を除外
+                        points.push([lat, lon]);
+                    }
                 }
                 return points;
             };
@@ -558,7 +571,7 @@
                 const filename = `${yyyy}${mm}${dd}_${hh}${min}.gpx`; // ファイル名を yyyymmdd_hhmm.gpx に修正
 
                 let gpxContent = `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="GPS現在地マップ & ルート誘導" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+<gpx version="1.1" creator="GPS現在地マップ &amp; ルート誘導" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
   <metadata><name>GPS履歴 ${yyyy}${mm}${dd} ${hh}:${min} (JST)</name><desc>記録されたGPSトラック</desc></metadata>
   <trk><name>記録トラック</name><trkseg>\n`;
 
@@ -757,7 +770,7 @@
                         gpxTrackPoints = parseGpx(gpxString);
                         displayGpxTrack(gpxTrackPoints);
                     } catch (error) {
-                        statusMessage.textContent = 'GPXファイルの解析に失敗しました。ファイルが破損しているか、不正な形式です。';
+                        statusMessage.textContent = error.message || 'GPXファイルの解析に失敗しました。ファイルが破損しているか、不正な形式です。';
                         console.error("GPX parsing error:", error);
                         isGpxRouteLoaded = false;
                         updateButtonStates();

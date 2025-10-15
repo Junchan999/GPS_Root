@@ -171,7 +171,7 @@
 </head>
 <body>
     <div class="controls-panel">
-        <h1>GPS表示・誘導・記録Ver1.60</h1>
+        <h1>GPS表示・誘導・記録Ver1.61</h1>
         <div class="button-group">
             <button id="getLocationButton">現在地を表示</button>
             <button id="startGuidanceButton" disabled>誘導を開始</button>
@@ -183,7 +183,7 @@
         <input type="file" id="gpxFileInput" accept=".gpx">
         <div class="input-group">
             <label for="recordingInterval">記録間隔:</label>
-            <input type="number" id="recordingInterval" value="5" min="1">
+            <input type="number" id="recordingInterval" value="15" min="1"> <!-- ここを5から15に変更 -->
             <span>秒</span>
         </div>
         <div id="statusMessage">GPXファイルを読み込むか、マップをクリックして目的地を設定してください。</div>
@@ -234,12 +234,12 @@
             let isDestinationRouteSet = false; // 目的地ルートが設定されているか
 
             let recordedTrackPoints = []; // 記録されたGPS履歴を保持する配列
-            let recordingIntervalSeconds = parseInt(recordingIntervalInput.value, 10) || 5; // 記録間隔 (秒)
+            let recordingIntervalSeconds = parseInt(recordingIntervalInput.value, 10) || 15; // ここを5から15に変更
             let lastRecordedPointTime = 0; // 最後に記録したポイントのタイムスタンプ
 
-            let wakeLock = null; // Wake Lockオブジェクトを保持する変数 <-- 追加
+            let wakeLock = null; // Wake Lockオブジェクトを保持する変数
 
-            // Wake Lockを要求する関数 <-- 追加
+            // Wake Lockを要求する関数
             const requestWakeLock = async () => {
                 if ('wakeLock' in navigator) {
                     try {
@@ -268,7 +268,7 @@
                 }
             };
 
-            // Wake Lockを解放する関数 <-- 追加
+            // Wake Lockを解放する関数
             const releaseWakeLock = () => {
                 if (wakeLock) {
                     wakeLock.release();
@@ -307,7 +307,7 @@
                         geolocationOptions
                     );
                     isGpsTrackingActive = true;
-                    requestWakeLock(); // <-- Wake Lockを要求
+                    requestWakeLock(); // Wake Lockを要求
                     // statusMessage.textContent = 'GPS追跡を開始しました。'; // このメッセージは呼び出し元で設定
                 }
             };
@@ -321,7 +321,7 @@
                         watchId = null;
                     }
                     isGpsTrackingActive = false;
-                    releaseWakeLock(); // <-- Wake Lockを解放
+                    releaseWakeLock(); // Wake Lockを解放
                     // statusMessage.textContent は他の処理で上書きされる可能性があるのでここでは設定しない
                 }
             };
@@ -886,7 +886,7 @@
                 }
             });
 
-            // ページが非表示になった後に再び表示された際にWake Lockを再要求する <-- 追加
+            // ページが非表示になった後に再び表示された際にWake Lockを再要求する
             // ブラウザはページが非表示になるとWake Lockを解放することがあるため、再要求が必要
             document.addEventListener('visibilitychange', async () => {
                 if (document.visibilityState === 'visible') {
